@@ -1,57 +1,95 @@
 <!doctype html>
 <html>
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta charset=\"utf-8\" />
+  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\" />
   <title>Room {{ code }}</title>
   <style>
     html,body { height:100%; margin:0; }
-    textarea { width:100%; height:100vh; border:0; padding:16px; box-sizing:border-box; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, 'Roboto Mono', monospace; font-size:16px; }
+    /* contenteditable editor */
+    #doc { width:100%; min-height:100vh; border:0; padding:24px; box-sizing:border-box; font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; font-size:16px; outline:none; }
+    #doc img { max-width:100%; height:auto; }
     .banner { position:fixed; top:8px; right:8px; background:#fff8; padding:6px 10px; border-radius:6px; }
   </style>
 </head>
 <body>
-  <div class="banner">Room: <strong id="room-code">{{ code }}</strong></div>
-  <textarea id="doc" placeholder="Start typing..."></textarea>
+  <div class=\"banner\">Room: <strong id=\"room-code\">{{ code }}</strong></div>
+  <div id=\"doc\" contenteditable=\"true\" spellcheck=\"false\"></div>
 
-  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js" integrity="" crossorigin="anonymous"></script>
+  <script src=\"https://cdn.socket.io/4.6.1/socket.io.min.js\" integrity=\"\" crossorigin=\"anonymous\"></script>
   <script>
     const ROOM = '{{ code }}';
     const socket = io();
 
-    const ta = document.getElementById('doc');
+    const editor = document.getElementById('doc');
     // join the room when connected
     socket.on('connect', () => {
       socket.emit('join', { room: ROOM });
     });
 
-    // initial content from server
+    // initial content from server (html)
     socket.on('init', (data) => {
-      if (typeof data.text === 'string') {
-        ta.value = data.text;
+      if (typeof data.html === 'string') {
+        editor.innerHTML = data.html;
       }
     });
 
-    // when other clients send updates
-    socket.on('text_change', (data) => {
-      if (typeof data.text !== 'string') return;
-      // if local value already equals incoming, ignore
-      if (ta.value === data.text) return;
-      const selStart = ta.selectionStart;
-      const selEnd = ta.selectionEnd;
-      ta.value = data.text;
-      // naive: keep selection at end (this could be improved)
-      ta.selectionStart = ta.selectionEnd = Math.min(ta.value.length, selEnd);
+    // when other clients send updates (html)
+    socket.on('content_change', (data) => {
+      if (typeof data.html !== 'string') return;
+      if (editor.innerHTML === data.html) return;
+      // naive replace; we try to move caret to end after update
+      editor.innerHTML = data.html;
+      placeCaretAtEnd(editor);
     });
 
-    // local edits -> emit with a small debounce
+    // helper to place caret at end
+    function placeCaretAtEnd(el) {
+      el.focus();
+      if (typeof window.getSelection != 'undefined' && typeof document.createRange != 'undefined') {
+        var range = document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }
+
+    // emit content with debounce
     let timer = null;
-    ta.addEventListener('input', () => {
+    function scheduleEmit() {
       clearTimeout(timer);
       timer = setTimeout(() => {
-        socket.emit('text_change', { room: ROOM, text: ta.value });
-      }, 200);
+        socket.emit('content_change', { room: ROOM, html: editor.innerHTML });
+      }, 250);
+    }
+
+    // listen for user edits
+    editor.addEventListener('input', scheduleEmit);
+
+    // handle paste: if an image is pasted, read as dataURL and insert as <img>
+    editor.addEventListener('paste', function(e) {
+      const items = (e.clipboardData || window.clipboardData).items;
+      if (!items) return;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.indexOf('image') !== -1) {
+          const file = item.getAsFile();
+          const reader = new FileReader();
+          reader.onload = function(ev) {
+            // insert image at cursor using execCommand for simplicity
+            const dataUrl = ev.target.result;
+            document.execCommand('insertHTML', false, '<img src="' + dataUrl + '" style="max-width:100%;" />');
+            scheduleEmit();
+          };
+          reader.readAsDataURL(file);
+          e.preventDefault();
+        }
+      }
     });
+
+    // also provide a simple paste-from-URL fallback (ctrl+v normal) - handled by browser
   </script>
 </body>
 </html>

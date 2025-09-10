@@ -4,9 +4,10 @@ import string, random
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'replace-this-with-a-secret'
-socketio = SocketIO(app, cors_allowed_origins='*')
+# allow larger socket payloads for pasted images (adjust as needed)
+socketio = SocketIO(app, cors_allowed_origins='*', max_http_buffer_size=10000000)
 
-# In-memory store: room_code -> text
+# In-memory store: room_code -> html (contenteditable HTML)
 rooms = {}
 
 def gen_code(n=6):
@@ -44,18 +45,18 @@ def on_join(data):
     if not room:
         return
     join_room(room)
-    # send current content to the joining client only
-    emit('init', {'text': rooms.get(room, '')}, to=request.sid)
+    # send current content (html) to the joining client only
+    emit('init', {'html': rooms.get(room, '')}, to=request.sid)
 
-@socketio.on('text_change')
-def on_text_change(data):
+@socketio.on('content_change')
+def on_content_change(data):
     room = data.get('room')
-    text = data.get('text', '')
+    html = data.get('html', '')
     if not room:
         return
-    rooms[room] = text
+    rooms[room] = html
     # broadcast to everyone in room except the sender
-    emit('text_change', {'text': text}, room=room, include_self=False)
+    emit('content_change', {'html': html}, room=room, include_self=False)
 
 if __name__ == '__main__':
     # For local dev: socketio.run(app)
